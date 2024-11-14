@@ -1,0 +1,208 @@
+---
+title: "487_HW3"
+output:
+  html_document: default
+  pdf_document: default
+date: "2024-10-12"
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE) # sets default behavior to include code in the HTML file, please keep
+
+rm(list = ls()) # clears the environment of any existing objects
+
+suppressPackageStartupMessages({ # reduces annoying printing
+  library(janitor) # has helpful cleaning functions
+  library(knitr) # knitting functions (transforming RMarkdown file to HTML)
+  library(lubridate) # date parsing functions
+  library(scales) # library for formatting ggplot axes
+  library(tidyverse) # workhorse dplyr package
+  library(ggplot2)
+  library(broom)
+  library(dplyr)
+})
+
+options(dplyr.summarise.inform = FALSE) # turns off an annoying dplyr behavior
+
+set.seed(487) # setting the seed makes random operations reproducible
+```
+
+## 1 Demand / Price Sensitivity Estimation
+```{r}
+# Read in Orange Juice dataset
+OJ <- read.csv('Orange Juice.csv', na.strings = '?')
+head(OJ)
+
+# Part A: Output the mean and percentile of EDUC and HHLARGE vars
+cat('Mean percentage of college graduate:', mean(OJ$EDUC, na.rm = TRUE), '\n')
+cat('Percent quantile values of college graduate:', 
+    quantile(OJ$EDUC, c(.25, .50, .75), na.rm = TRUE) %>%
+    as.list() %>%
+    paste0(c("25%: ", "50%: ", "75%: "), ., collapse = ", "), '\n') 
+
+cat('Mean percentage of large household:', mean(OJ$HHLARGE, na.rm = TRUE), '\n')
+cat('Percent quantile values of large household:', 
+    quantile(OJ$HHLARGE, c(.25, .50, .75), na.rm = TRUE) %>%
+    as.list() %>%
+    paste0(c("25%: ", "50%: ", "75%: "), ., collapse = ", "), '\n')
+
+# Part B: Interacted terms model with demographics; demand elasticity estimation
+model_one <- lm(formula = logmove ~ log(price)*feat*brand + AGE60 + EDUC + ETHNIC + HHLARGE + WORKWOM + HVAL150 + SSTRDIST + SSTRVOL + CPDIST5 + CPWVOL5, 
+               data = OJ)
+tidy(model_one) %>% 
+  kable()
+
+cat('Change in log quantity when using 75th percentile value of HHLARGE compared to 50th:', coef(model_one)["HHLARGE"] * (summary(OJ$HHLARGE)["3rd Qu."] - summary(OJ$HHLARGE)["Median"]), '\n')
+
+cat('Change in log quantity when using 75th percentile value of EDUC compared to 50th:', coef(model_one)["EDUC"] * (summary(OJ$EDUC)["3rd Qu."] - summary(OJ$EDUC)["Median"]), '\n')
+
+cat('Based on the log quaanity change value, we can observe that HHLARGE is a stonger demographic variable in predicting our orange juice demand', '\n')
+
+# Part C: Price sensitivity estimation
+model_two <- lm(formula = logmove ~ log(price):feat:brand + log(price):HHLARGE + log(price):EDUC+ AGE60 + EDUC + ETHNIC + HHLARGE + WORKWOM + HVAL150 + SSTRDIST + SSTRVOL + CPDIST5 + CPWVOL5, data = OJ)
+
+tidy(model_two) %>% 
+  kable()
+
+cat('Coefficient for log(price):HHLARGE:', coef(model_two)['log(price):HHLARGE'], '\n')
+cat('Coefficient for log(price):EDUC:', coef(model_two)['log(price):EDUC'], '\n')
+
+cat('The sign of coefficeint should make sense such that we know large household are concerned with cost of their consumption, but the difference in the two variables\' magnitude alittle bit out of expectation based on the 2b answer on the estimation of the demands', '\n')
+
+val_1 <- coef(model_two)['HHLARGE']
+val_2 <- coef(model_two)['log(price):HHLARGE']
+print(val_1)
+print(val_2)
+message <- ifelse(val_1 > val_2, "With log price interaction HHLARGE coeff. is greater than without (interaction significant)", 
+                  ifelse(val_1< val_2, "With log price interaction HHLARGE coeff. is smaller than without (interaction insignificant)"))
+cat(message, '\n')
+
+val_1 <- coef(model_two)['EDUC']
+val_2 <- coef(model_two)['log(price):EDUC']
+print(val_1)
+print(val_2)
+message <- ifelse(val_1 > val_2, "With log price interaction EDUC coeff. is greater than without (interaction significant)", 
+                  ifelse(val_1< val_2, "With log price interaction EDUC coeff. is smaller than without (interaction insignificant)"))
+cat(message, '\n')
+
+cat('Change in log quantity when using 75th percentile value of log(price):HHLARGE compared to 50th:', coef(model_two)["log(price):HHLARGE"] * (summary(OJ$HHLARGE)["3rd Qu."] - summary(OJ$HHLARGE)["Median"]), '\n')
+
+cat('Change in log quantity when using 75th percentile value of log(price):EDUC compared to 50th:', coef(model_two)["log(price):EDUC"] * (summary(OJ$EDUC)["3rd Qu."] - summary(OJ$EDUC)["Median"]), '\n')
+
+cat('Based on the values in previous two R-blcoks, we know that HHLARGE is more important to price sneisisty, which is in accordance to our esimation of demand', '\n')
+# Part D
+
+
+# The flip in the sign of coefficient on EDUC and HHLARGE during interaction could due
+# to the the observation of proportionality in the change of peoples demand when we
+# interact with the log(price). log(price): HHLARGE is a positive shifter and with increased price sensitivity for the demand curve had become steeper and outward
+
+```
+
+## 2 Intertemproral Subtitution
+```{r}
+# Part A
+DF1 <- OJ
+DF1$week <- DF1$week +1
+
+DF2 <- merge(OJ, DF1, by=c('brand', 'store', 'week'))
+head(DF2)
+
+DF2 <- DF2 %>%
+  rename(lag_price = price.y, wk1_price = price.x, log_quantity = logmove.x)
+# Part B
+model <- lm(log_quantity ~ log(wk1_price) + log(lag_price), data = DF2)
+
+tidy(model) %>% 
+  kable()
+
+# Part C:
+# I noticed the week 1 price is more elastic compared to our lag week price. It should make more sense to use the lag week price to make the decision if we were to increase price, but choosing week 1 price if we were to decrease price based on the our estimate of the demand elasticity. We are given with a sales scenario, and if it is the case of sale, we would say that it is effective to have the interpersonal substitution effect with customers more leaning toward purchases in the following, with their expectation of sales making their demand less elastic
+
+```
+## 3 Cross Validation
+```{r}
+#Part A
+OJ_5_split <- DF2 %>%
+  group_split(sample(5, n(), replace = TRUE))
+
+mse_values <- rep(1:5)
+
+# Part B, C
+for (i in 1:5) {
+  
+  train_data <- bind_rows(OJ_5_split[-i])  # 1-4 of i
+  test_data <- OJ_5_split[[i]]  # within the 5 dataframes collect the element
+
+  model.fit <- lm(log_quantity ~ wk1_price * brand + lag_price + 
+                  wk1_price * HHLARGE.x + wk1_price * EDUC.x + 
+                  AGE60.x + EDUC.x + ETHNIC.x + HHLARGE.x + 
+                  WORKWOM.x + HVAL150.x + SSTRDIST.x + 
+                  SSTRVOL.x + CPDIST5.x + CPWVOL5.x, data = train_data)
+  
+  predictions <- predict(model.fit, newdata = test_data)
+
+  mse_values[i] <- mean((test_data$log_quantity - predictions)^2)
+}
+
+cross_validated_mse <- mean(mse_values)
+
+print(mse_values)  # Individual MSEs
+print(cross_validated_mse)  # Average MSE
+
+```
+## 4
+
+```{r}
+
+# Part A
+
+# Scatterplot of logmove for each week
+ggplot(OJ, aes(x = week, y = logmove)) +
+  geom_point(alpha = 0.3) +
+  labs(title = 'Log_quantity for each week', x = 'Week', y = 'Log_quantity')
+# I don't think the logmove is particular week-based on the scatter graph itself, and it is certianly non-linear of the impact of the sale effect
+
+# Part B and C
+# Fit LOESS models with different span values
+loess_05 <- loess(logmove ~ week, data = OJ, span = 0.05)
+loess_15 <- loess(logmove ~ week, data = OJ, span = 0.15)
+loess_30 <- loess(logmove ~ week, data = OJ, span = 0.30)
+
+# Add fitted values to the dataset
+OJ$loess_05 <- predict(loess_05)
+OJ$loess_15 <- predict(loess_15)
+OJ$loess_30 <- predict(loess_30)
+# Span allow us to see more detailed observation on the trend of logmove movement
+
+# Part D
+
+# Plot the fitted values from the LOESS models
+ggplot(OJ, aes(x = week, y = logmove)) +
+  geom_point(alpha = 0.3) +
+  geom_line(aes(y = loess_05, color = 'Span = 0.05')) +
+  geom_line(aes(y = loess_15, color = 'Span = 0.15')) +
+  geom_line(aes(y = loess_30, color = 'Span = 0.30')) +
+  labs(title = 'Logmove of each week with fitted loss', x = 'Week', y = 'Log_quantity') +
+  scale_color_manual(values = c('Span = 0.05' = 'blue', 'Span = 0.15' = 'green', 'Span = 0.30' = 'red')) 
+
+# The lower the span vallue, the fitted is the model, vice versa
+
+# Part E
+fav_loess <- loess_15
+
+OJ$residuals <- OJ$logmove - OJ$loess_15
+residuals_model <- lm(residuals ~ log(price) * feat * brand, data = OJ)
+
+# Compare with the original regression
+original_model <- lm(logmove ~ log(price) * feat * brand, data = OJ)
+
+
+
+cat('residual model\'s R^2:', summary(residuals_model)$r.squared, '\n')
+cat('original model\'s R^2:',summary(original_model)$r.squared, '\n')
+# the lower R^2 valueed model is a more trust-worthy model; we regress on sales to remove the seasonality impact on the effect 
+names(summary(original_model))
+
+```
+

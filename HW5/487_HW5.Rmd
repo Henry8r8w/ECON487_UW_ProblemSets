@@ -1,0 +1,123 @@
+---
+title: "487_HW5"
+output: html_document
+date: "2024-10-26"
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE) # sets default behavior to include code in the HTML file, please keep
+
+rm(list = ls()) # clears the environment of any existing objects
+suppressPackageStartupMessages({ # reduces annoying printing
+  library(janitor)
+  library(broom)
+  library(knitr)
+  library(glmnet)
+  library(xgboost)
+  library(ggthemes)
+  library(tidyverse)
+})
+
+options(dplyr.summarise.inform = FALSE) # turns off an annoying dplyr behavior
+
+set.seed(720) # setting the seed makes random operations reproducible
+```
+
+## 1 Gradient-Boosted Trees Method on Model Evaluation: Cross validation
+```{r}
+library(xgboost)
+
+OJ <- read.csv('Orange Juice.csv') %>% 
+  clean_names()
+
+# Set out an 80/20 train vs.test 
+OJ_cv<- OJ %>% mutate(log_price = log(price)) %>% mutate(id_val = row_number())
+
+OJ_train <- OJ_cv %>% slice_sample(prop=.8)
+OJ_test <- OJ_cv %>% anti_join(OJ_train, by = 'id_val')
+
+
+df_to_xgb_mat <- function(df){
+  cleaned_data <- df %>% 
+    select(-id_val, -store, -price)
+  
+  mat <- model.matrix(formula('logmove ~ . - 1'), cleaned_data) # -1 removes intercept
+  
+  return(xgb.DMatrix(data = mat, label = cleaned_data$logmove))
+}
+
+train_matr <- df_to_xgb_mat(OJ_train)
+test_matr <- df_to_xgb_mat(OJ_test)
+
+# 5-fold cv
+cv_fit <- xgb.cv(
+  data = train_matr,
+  nfold = 5,
+  nrounds = 15000,
+  early_stopping_rounds = 20,
+  print_every_n = 100
+)
+
+# Plot and draw the model performance on log scale
+cv_fit$evaluation_log %>% 
+  select(iter, train_rmse_mean, test_rmse_mean) %>% 
+  pivot_longer(train_rmse_mean:test_rmse_mean) %>% 
+  mutate(name = str_extract(name, '.*(?=_rmse_mean)')) %>% 
+  ggplot(data = ., aes(x = iter, y = log(value), color = name)) + 
+    geom_line() +
+    geom_vline(xintercept = cv_fit$best_iteration, color = 'red', linetype = 'dashed') + 
+    labs(x = 'Training Iteration',
+         y = 'Log(RMSE)',
+         color = 'Dataset') +
+    theme_bw() +
+    scale_color_colorblind()
+```
+
+## Model Evaluation: MSE CV vs. Predicted; Feature Importance
+```{r}
+#----------- Finding the Best Iteration from Cross-Validation -----------#
+best_iter <- cv_fit$evaluation_log %>% 
+  filter(test_rmse_mean == min(test_rmse_mean))
+cat('best iteration MSE:', (best_iter$test_rmse_mean)^2)
+
+
+xgb_model <- xgboost(
+  data = train_matr,
+  nrounds = cv_fit$best_iteration,
+  early_stopping_rounds = 20,
+  print_every_n = 100
+)
+
+preds_xgb <- predict(xgb_model, newdata = test_matr)
+mean((OJ_test$logmove - preds_xgb)^2)
+
+plot_predictions <- function(preds, truth){
+  ggplot() +
+    geom_point(aes(x = truth, y = preds), alpha = .1, color = 'dodgerblue3') +
+    geom_abline(slope=1, intercept=0, linetype = 'dashed', color = 'red') +
+    labs(x = 'Actual', y = 'Prediction') +
+    theme_bw()
+}
+
+plot_predictions(preds_xgb, OJ_test$logmove)
+
+#----------- Fitting a LASSO Model Using Cross-Validation -----------#
+lhs_vars <- OJ_cv %>% 
+  select(-store, -logmove, -price) %>% colnames()
+
+reg_str_int <- str_c( '~(', str_c(lhs_vars, collapse = ' + '), '-1)^2')
+X_train <- model.matrix(formula(reg_str_int), OJ_train)
+X_test <- model.matrix(formula(reg_str_int), OJ_test)
+y <- OJ_train$logmove
+
+
+cv_fit <- cv.glmnet(X_train, y, alpha = 1, nfolds = 5)
+preds_lasso <- predict(cv_fit, newx = X_test) %>% 
+  as.vector()
+mean((OJ_test$logmove - preds_lasso)^2)
+
+#----------- Analyzing Feature Importance from XGBoost -----------#
+imp_mat <- xgb.importance(model = xgb_model)
+xgb.ggplot.importance(importance_matrix = imp_mat %>% head(10))
+
+```

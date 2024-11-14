@@ -1,0 +1,265 @@
+---
+title: "487_HW2"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+date: "2024-10-08"
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE) # sets default behavior to include code in the HTML file, please keep
+
+rm(list = ls()) # clears the environment of any existing objects
+
+suppressPackageStartupMessages({ # reduces annoying printing
+  library(janitor) # has helpful cleaning functions
+  library(knitr) # knitting functions (transforming RMarkdown file to HTML)
+  library(lubridate) # date parsing functions
+  library(scales) # library for formatting ggplot axes
+  library(tidyverse) # workhorse dplyr package
+  library(ggplot2) # load ggplot for aesthetics
+  library(tidyverse)
+  library(broom)
+})
+
+options(dplyr.summarise.inform = FALSE) # turns off an annoying dplyr behavior
+
+set.seed(487) # setting the seed makes random operations reproducible
+```
+
+#### Empirical Section 1-3: set directory, load data, and view table
+```{r}
+OJ <- read.csv("Orange Juice.csv" , na.strings = "?") 
+head(OJ)
+```
+
+#### Empirical Section 4: price visulaization using box plots
+```{r}
+# Access variable from the OJ data frame
+price <- OJ$price
+log_price <- log(OJ$price)
+brand <-OJ$brand
+
+# Box plot produced by price
+ggplot(data = OJ, aes(x = "", y = price)) + geom_boxplot() 
+
+# Box plot on price on brands (qualitative factor)
+ggplot(OJ, aes(factor(brand), price)) + geom_boxplot(aes(fill = brand))
+
+# Box plot on log_price on brands (qualitative factor)
+ggplot(OJ, aes(factor(brand), log_price)) + geom_boxplot(aes(fill = brand))
+
+```
+What do these graphs tell you about the variation in price? Why do the log plots look
+different? Do you find them more/less informative?
+
+The box and whisker length both tell us about the variation of price, where tropicana has more variation than minute maid and dominicks;but with log_price, we see that it is the dominicks that is the more variation. Log_price should provide more information in regard to the actual variation, becuase it reflects the proportionality from our data.
+
+#### Empirical Section 5: scatter plots and regressions
+```{r}
+log_quant<- OJ$logmove
+ggplot(OJ, aes(log_quant, log_price)) +geom_point(aes(color = factor(brand), alpha=.5)) + labs(y = 'log(price)',
+       x = 'log(quantity)')
+
+# Regression of log(quantity) on log(price)
+basic_reg <- lm(
+  formula = logmove ~ log(price),
+  data = OJ
+)
+tidy(basic_reg) %>% # dplyr piping
+  kable()
+
+# Regression of log(quantity) on log(price) with brand intercepts
+brand_reg <- lm(
+  formula = logmove ~ log(price) + brand,
+  data = OJ
+)
+tidy(brand_reg) %>% 
+  kable()
+# Regression of log(quantity) on log(price) with Dominick's removed as base intercept
+no_int_brand_reg <- lm(
+  formula = logmove ~ log(price) + brand - 1,
+  data = OJ
+)
+tidy(no_int_brand_reg) %>% 
+  kable()
+
+# Regression of log(quantity) on log(price) with brand intercepts plotted on top of scatter plot
+OJ %>% mutate(fitted_y = predict(brand_reg, newdata=.)) %>% 
+    ggplot(data = .) + geom_point(aes(x = logmove, y = log(price), color = brand), alpha=.1) +
+    geom_line(aes(x = fitted_y, y = log(price), color = brand), linewidth = 2) +
+    labs(y = 'log(price)', x = 'log(quantity)') 
+   
+```
+
+What do insights can you derive that were not apparent before?
+There is an increase trend of quantity sold, as the price is lowering; an inverse demand relationship is now revealed for all the brands, with each having a little different coefficients
+
+#### Empirical Section 6: demand elasticities ((dq/dp)*(P/Q))
+```{r}
+# Part A: Regression of log(quantity) on log(price)
+modelA <- lm(log_quant ~ log_price)
+cat('MSE of model A:', mean(modelA$residuals^2), '\n')
+cat('Elasticity of model A:', coefficients(modelA)["log_price"], '\n')
+
+# Part B:Regression of log(quantity) on log(price) with brand intercepts
+modelB <- lm(log_quant ~ log_price + OJ$brand)
+cat('MSE of model B:', mean(modelB$residuals^2), '\n')
+cat('Elasticity of model B:', coefficients(modelB)["log_price"], '\n')
+
+# Part C:Regression of log(quantity) on log(price) interacted with brand intercepts 
+modelC <- lm(log_quant ~ log_price:factor(OJ$brand))
+cat('MSE of model C:', mean(modelC$residuals^2), '\n')
+cat('Elasticity of model C:', coefficients(modelC)["(Intercept)"], '\n')
+
+run_brand_regression <- function(brand_name){
+  data_reg <- OJ %>% 
+    filter(brand == brand_name)
+  lm(logmove ~ log(price), data = data_reg) %>% 
+    tidy() %>% 
+    kable()
+}
+run_brand_regression('dominicks')
+run_brand_regression('minute.maid')
+run_brand_regression('tropicana')
+```
+How well does the model fit? What is the elasticity, does it make sense?
+ModelA fits pretty bad relative to ModelC, based on our MSE value. It makes sense that MOdel B fits better than ModelA as it captures the dyanmic of the orange juice market with different brands exist within the market
+
+How do the results change? How should we interpret these coefficients?
+ModelB improves upon ModelA, and we see that the elasticity has increased (|-3.13|> |-1.60|). The total effect of adding brand as intercept terms has increased the demand elasticity of the demand for orange juice
+
+What is the insights we get from this regression? What is the elasticity for each firm? Do the elasticities make sense?
+The higher the priced brand (dominics -> minute.maid -> tropicana), the less elastic the firm is. It make sense, because orange juice brands are substitutes. 
+
+
+#### Problem 7: advertisement effect (var_name = feat) on log_quantity
+```{r}
+# Part A: Average Rate of Each Brand Featuring and Price
+OJ %>%     
+  group_by(brand) %>%
+  summarise(avg_price = mean(price), featured_rate = mean(feat))
+
+# Part B: Additive Effect of Feat Variable
+modelB <- lm(log_quant ~ log_price + OJ$feat + factor(OJ$brand))
+tidy(modelB) %>% 
+  kable()
+
+OJ %>% mutate(fitted_y = predict(modelB, newdata=.)) %>% 
+    ggplot(data = .) + geom_point(aes(x = logmove, y = log(price), color = brand, shape = factor(feat)), alpha=.1) +
+    geom_line(aes(x = fitted_y, y = log(price), color = brand, linetype = factor(feat)), linewidth = 2) +
+    labs(y = 'log(price)', x = 'log(quantity)') 
+
+# Part C: A model that should impact sales and price sensitivity
+modelC <- lm(log_quant ~ log(price) + feat + log(price):feat + brand + brand:log(price), data = OJ)
+tidy(modelC) %>% 
+  kable()
+
+OJ %>% mutate(fitted_y = predict(modelC, newdata=.)) %>% 
+    ggplot(data = .) + geom_point(aes(x = logmove, y = log(price), color = brand, shape = factor(feat)), alpha=.1) +
+    geom_line(aes(x = fitted_y, y = log(price), color = brand, linetype = factor(feat)), linewidth = 2) +
+    labs(y = 'log(price)', x = 'log(quantity)') 
+
+# Part D: A model that should have different impact of being featured and on price sensitivity
+modelD <- lm(log_quant ~ log_price*feat*brand, data = OJ)
+tidy(modelD) %>% 
+  kable()
+
+# Part E:A model that should impact sales and price sensitivity + demographics
+modelE <- lm(log_quant ~ log(price) + feat + log(price):feat + brand + brand:log(price) + AGE60 + EDUC + ETHNIC + HHLARGE + WORKWOM + HVAL150 + SSTRDIST + SSTRVOL + CPDIST5 + CPWVOL5 , data = OJ)
+tidy(modelE) %>% 
+  kable()
+```
+
+#### Problem 8 Overall Analysis
+
+Based on your work, which brand has the most elastic demand, which as the least
+elastic?
+
+Dominicks is the most elastic, and whereas tropicana is the least elastic
+
+Do the average prices of each good match up with these insights?
+Yes, because tropicana is the most expensive one
+
+Take average prices for each brand. Use the elasticity pricing formula (you can use
+average values from your analysis above) to “back out” unit costs for each brand. Do
+the unit costs appear to be the same or different? What are your insights/reactions?
+
+ P = MC / (1 + 1/elasticity)
+ 
+1.73 = MC_d / (1+ 1/ |-2.68|) => MC_d = 1.25
+
+2.24 = MC_m / (1+ 1/ |-2.68 +0.63|) => MC_m = 1.16
+
+2.87 = MC_t/ (1+ 1/ |-2.68+0.88|) => MC_t = 1.11
+
+I did not expect the MC for our premium brand to be the lowest. While MC might not incorporate other factors such as material cost, scale of production, storage cost, we should still firmly belie that tropicana has the highest mark up using P - MC / MC formula
+
+
+#### Problem 9
+```{r}
+# Part A: Full Data Set Modeling
+full_oj_reg<- OJ %>% 
+  mutate(id_val = row_number(), # ID variable to separate train and test later
+         log_price = log(price))
+
+demo_cols <- OJ %>% select(AGE60:HVAL150) %>% colnames()
+
+reg_str <- str_c('logmove ~ log_price*feat*brand + ', str_c(demo_cols, collapse = ' + '))
+
+demo_reg_modelA <- lm(formula(reg_str), data = full_oj_reg)
+
+tidy(demo_reg_modelA) %>% 
+  kable()
+# Part B
+
+# What demographics significantly (t-value>2) influence demand?
+    # AGE60, ETHNIC, etc; the ***s
+# What is the improvement relative to the model without the demographic features? (using logmove_hat, compared to logmove)
+  # We improved from 0.5314 (source: modelD summary) to 0.5534 in a range where R^2 is range [0, 1] and that 1 being the perfect extreme
+
+# Compare the out of sample MSE for the models. Which is lower implying the
+# model does a better job of fitting the data?
+  # The model with demographics, as 0.457 < 0.480
+
+# Part C: Calculate the fair R^2
+logmove_hat <- predict(demo_reg_modelA, newdata = OJ)
+
+RSS <- sum((logmove_hat - full_oj_reg$logmove)^2)
+TSS  <- sum((full_oj_reg$logmove - mean(full_oj_reg$logmove))^2)
+n <- nrow(full_oj_reg)
+k <- nrow(tidy(demo_reg_modelA))
+R2 <- round(1 - RSS / TSS, 2) 
+Adj_R2 <- round(1 - (n-1)/(n-k-1) * RSS / TSS, 2)
+cat(str_interp('- R2: ${R2}\n- Adjusted R2: ${Adj_R2}'), '/n')
+
+# Part D
+train_set <- full_oj_reg %>% slice_sample(prop = .8)
+test_set <- full_oj_reg %>% anti_join(train_set, by = 'id_val')
+
+demo_reg_train <- lm(formula(reg_str), data = train_set)
+reg_train <- lm(logmove ~ log_price*feat*brand, data = train_set)
+
+mse <- function(model, test_set){
+  return(round(mean((test_set$logmove - predict(model, newdata=test_set))^2), 2))
+}
+
+fair_R2 <- function(model, test_set){
+  return(round(cor(test_set$logmove, predict(model, newdata=test_set))^2, 2))
+}
+
+cat(
+  str_c(
+    c(
+      str_interp('Test MSE (demographic variables included): ${mse(demo_reg_train, test_set)}'),
+      str_interp('Test MSE (demographic variables excluded): ${mse(reg_train, test_set)}'),
+      str_interp('Fair R2 (demographic variables included): ${fair_R2(demo_reg_train, test_set)}'),
+      str_interp('Fair R2 (demographic variables excluded): ${fair_R2(reg_train, test_set)}'),
+      str_interp('Train MSE (demographic variables included): ${mse(demo_reg_train, train_set)}'),
+      str_interp('Train MSE (demographic variables excluded): ${mse(reg_train, train_set)}')
+    ),
+    collapse = '\n- '
+  )
+)
+```

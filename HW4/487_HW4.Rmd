@@ -1,0 +1,455 @@
+---
+title: "487_HW4"
+output: html_document
+date: "2024-10-23"
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE) # sets default behavior to include code in the HTML file, please keep
+
+rm(list = ls()) # clears the environment of any existing objects
+
+suppressPackageStartupMessages({ # reduces annoying printing
+  library(ggthemes)
+  library(rpart)
+  library(rpart.plot)
+  library(partykit)
+  library(maptree)
+  library(glmnet)
+  library(broom)
+  library(janitor)
+  library(knitr)
+  library(tidyverse)
+})
+
+options(dplyr.summarise.inform = FALSE) # turns off an annoying dplyr behavior
+
+set.seed(720) # setting the seed makes random operations reproducible
+```
+
+## 1 LASSO Regression
+```{r}
+
+# Load, clean names (lower-casify, underscore), mutate column (log_price), arrange rows (by week), group data by store and brand, 
+# mutate for lag_price (check for continuity), ungroup, filter out the unavailable lag_price of the OJ data
+
+OJ <- read.csv('Orange Juice.csv') %>%
+  clean_names() %>% 
+  mutate(log_price = log(price)) %>% 
+  arrange(week) %>% 
+  group_by(store, brand) %>% 
+  mutate(lag_price = ifelse(lag(week) + 1 == week, lag(log_price), NA)) %>% # check for continuity
+  ungroup() %>% 
+  filter(!is.na(lag_price)) 
+
+
+lhs_vars <- OJ %>%
+  select(-store, -week,-logmove,-price)%>% # -column_name_x allow exclusion of column names prior col_x
+  colnames()
+reg_str_vars<- str_c('~(',str_c(lhs_vars, collapse = ' + '),'-1)^2') # exclude intercept (-1), inclcude pairwise effect (^2)
+
+
+X <- model.matrix(formula(reg_str_vars), OJ)
+Y <- OJ$logmove
+
+lasso_r1 <- glmnet(X,Y,alpha = 1)
+plot(lasso_r1 , xvar = 'lambda')
+coef(lasso_r1, s=lasso_r1$lambda.min)
+
+lasso_r1_cv <- cv.glmnet(X,Y,alpha = 1)
+plot(lasso_r1_cv )
+cv_coef_results <- coef(lasso_r1_cv, s = 'lambda.1se')
+cat(str_interp('LASSO CV MSE: ${round(lasso_r1_cv $cvm[which(lasso_r1_cv $lambda == lasso_r1_cv$lambda.1se)], 2)}'), '\n')# cvm contains the cv errors
+
+
+cv_coef_results_df <- data.frame(
+  'variable' = unlist(cv_coef_results@Dimnames[1]), #extract by first dimension, rows
+  'coefficient' = as.numeric(cv_coef_results)
+)
+
+cv_coef_results_df %>% 
+  filter(coefficient == 0) %>%  # the unnecessary variables
+  kable()
+
+# Part E
+# Lasso shrinks the features useful based on penalization (lambda) on overfitting feature. Contrary to our intuition, Lasso will not include all variable,but will shrinks base on the given feature matrix
+
+nonzero_coefs <- cv_coef_results_df %>% 
+  filter(coefficient != 0) %>% 
+  nrow()
+
+num_obs <- nrow(OJ)
+
+cat('Ratio of features to observations:', nonzero_coefs / num_obs)
+```
+## 2 OLS Regression with non-zero Coeff. filtered by LASSO
+```{r}
+cv_coef_results_df
+
+lasso_selected_reg_str <- str_c(
+  'logmove ~ ',
+  cv_coef_results_df %>% 
+    filter(coefficient != 0, variable != '(Intercept)') %>% 
+    pull(variable) %>%       # creates a column vector from variable column
+    str_c(., collapse = ' + ')
+)
+
+oj_lasso_selection <- bind_cols(
+  X, 
+  'logmove' = OJ$logmove
+) #take in features (X) from previous selection and logmove to regress on
+
+lasso_selected_reg <- lm(formula(lasso_selected_reg_str),
+                         data = oj_lasso_selection) # regress lasso-selected features and perfrom OLS
+
+tidy(lasso_selected_reg) %>% 
+  filter(str_detect(term, 'log_price')) %>% 
+  kable()
+
+# Part B
+# The most elastic was the Tropicana. It should have lower mark up price power, because of how elastic it is s.t. it has fewer control over the price.
+
+```
+
+## 3 3x3 Elasticity Matrix (basic vs. cross-price: 1.featured 2.lagged)
+```{r}
+
+# Reshape data from long to wide format 
+wide_data <- OJ %>% 
+  # Select relevant columns
+  select(store, week, brand, log_price, lag_price, feat) %>% 
+  
+  pivot_longer(
+    c(log_price, lag_price, feat)
+  ) %>% 
+  
+  mutate(name = str_c(name, brand, sep = '_')) %>%  # create brand specific columns
+  select(-brand) %>% # drop brand column
+  
+  # Convert back to wide format with brand-specific columns
+  pivot_wider(
+    id_cols = c(store, week),  # keys: store, weak 
+    names_from = name,         # brand-specific names exist as column names
+    values_from = value        # values sort by corresponding keys
+  )
+
+cross_price_data <- OJ %>% 
+  select(store, week, logmove, brand) %>% 
+  # Merge sales and price data by keys: store, weak 
+  left_join(wide_data, by = c('store', 'week'))
+
+#----------- Basic Price Elasticity Analysis -----------#
+price_reg <- function(brand_var){
+  reg_df <- cross_price_data %>% 
+    filter(brand == brand_var)
+  
+  reg_str <- 'logmove ~ log_price_dominicks + log_price_minute.maid + log_price_tropicana'
+  reg <- lm(formula(reg_str), data = reg_df)
+  
+  # Format results into elasticity matrix
+  output <- reg %>% 
+    tidy() %>% 
+    filter(term %in% str_c('log_price_', unique(OJ$brand))) %>% 
+    select(term, estimate) %>% 
+    mutate(q_var = brand_var) %>% 
+    pivot_wider(id_cols = q_var,
+                names_from = term,
+                values_from = estimate)
+  
+  return(output)
+}
+
+#----------- Price Elasticity with Feature Effects -----------#
+price_feat_reg <- function(brand_var){
+  reg_df <- cross_price_data %>% 
+    filter(brand == brand_var)
+  
+
+  reg_str <- str_interp('logmove ~ (log_price_dominicks + log_price_minute.maid + log_price_tropicana)*feat_${brand_var}')
+  reg <- lm(formula(reg_str), data = reg_df)
+  
+
+  output <- reg %>% 
+    tidy() %>% 
+    filter(term %in% str_c('log_price_', unique(OJ$brand))) %>% 
+    select(term, estimate) %>% 
+    mutate(q_var = brand_var) %>% 
+    pivot_wider(id_cols = q_var,
+                names_from = term,
+                values_from = estimate)
+  
+  return(output)
+}
+
+#----------- Total Price Effects During Feature Periods -----------#
+price_feat_reg_when_featured <- function(brand_var){
+  reg_df <- cross_price_data %>% 
+    filter(brand == brand_var)
+  
+
+  reg_str <- str_interp('logmove ~ (log_price_dominicks + log_price_minute.maid + log_price_tropicana)*feat_${brand_var}')
+  reg <- lm(formula(reg_str), data = reg_df)
+  
+
+  output <- reg %>% 
+    tidy() %>% 
+    filter(str_detect(term, 'log_price_')) %>% 
+    mutate(brand = str_extract(term, 'tropicana|minute.maid|dominicks')) %>% 
+    group_by(brand) %>% 
+    summarise(estimate = sum(estimate)) %>% 
+    ungroup() %>% 
+    mutate(q_var = brand_var) %>% 
+    pivot_wider(id_cols = q_var,
+                names_from = brand,
+                names_prefix = 'log_price_',
+                values_from = estimate)
+  
+  return(output)
+}
+
+#----------- Price Elasticity with Features and Lagged Effects -----------#
+price_feat_lags_reg <- function(brand_var){
+  reg_df <- cross_price_data %>% 
+    filter(brand == brand_var)
+  
+  reg_str <- str_c(
+    str_interp('logmove ~ (log_price_dominicks + log_price_minute.maid + log_price_tropicana)*feat_${brand_var}'),
+    'lag_price_tropicana + lag_price_dominicks + lag_price_minute.maid',
+    sep = ' + '
+  )
+  
+  reg <- lm(formula(reg_str), data = reg_df)
+  
+
+  output <- reg %>% 
+    tidy() %>% 
+    filter(term %in% str_c('log_price_', unique(OJ$brand))) %>% 
+    select(term, estimate) %>% 
+    mutate(q_var = brand_var) %>% 
+    pivot_wider(id_cols = q_var,
+                names_from = term,
+                values_from = estimate)
+  
+  return(output)
+}
+
+# Function to run analysis for all brands
+run_analysis <- function(analysis_function) {
+  bind_rows(
+    lapply(
+      unique(OJ$brand), 
+      analysis_function
+    )
+  ) %>% 
+    arrange(q_var) %>% 
+    kable()
+}
+
+# Run all analyses
+run_analysis(price_reg)
+run_analysis(price_feat_reg)
+run_analysis(price_feat_reg_when_featured)
+run_analysis(price_feat_lags_reg)
+
+
+```
+
+
+## 4 Sales Weighted Price for Orange Juice by Store
+
+```{r}
+OJ_tree <- OJ %>% 
+  mutate(q = exp(logmove)) %>% 
+  group_by(store, week) %>% # data set grouped by stores, then weeks
+  mutate(weighted_mean = weighted.mean(price, q)) %>% 
+  ungroup()
+
+```
+
+## 5 Regression Tree
+```{r}
+
+#----------- Price Elasticity with Features and Lagged Effects -----------#
+reg_tree_data <- OJ_tree %>% 
+  select(weighted_mean, age60:cpwvol5)
+
+show_tree <- function(cp_val){
+  fit <- rpart(
+    as.formula(weighted_mean ~ .),  
+    data = reg_tree_data,           
+    method = "anova",               
+    cp = cp_val                     # complexity parameter for pruning
+  )
+  
+  draw.tree(fit)
+}
+
+# display regression trees 
+show_tree(.007)
+show_tree(.003)
+show_tree(.002)
+
+```
+
+## 6 Split Analysis 
+```{r}
+#----------- Data Preparation for Split Analysis -----------#
+mse_split <- function(var_name, split_point){
+  tree_data %>% 
+    mutate(above = !!sym(var_name) >= split_point) %>% 
+    group_by(above) %>%
+    mutate(group_mean = mean(weighted_mean)) %>%
+    ungroup() %>%
+    mutate(error_sq = (weighted_mean - group_mean)^2) %>%
+    pull(error_sq) %>%
+    mean(.)
+}
+
+tree_data <- OJ_tree %>% 
+  select(weighted_mean, age60, educ, ethnic, hhlarge, workwom, hval150)
+
+get_all_splits <- function(var_name){
+  data_vec <- tree_data %>% pull(var_name)  # extract the data vector
+  
+  min_var = ceiling(min(data_vec) * 100) / 100 # both ceiling and floor help with truncation
+  max_var = floor(max(data_vec) * 100) / 100
+  grid = seq(min_var, max_var, .01)         # Generate a sequence of split points
+  
+  # Calculate MSE for each split value
+  df = data.frame(
+    'var' = var_name,
+    'split_val' = grid,
+    'mse' = sapply(grid, function(x) { mse_split(var_name, x) })
+  )
+  return(df)
+}
+
+
+all_cols <- colnames(tree_data %>% select(-weighted_mean))
+full_splits <- bind_rows(lapply(all_cols, get_all_splits))
+
+#----------- Visualize Split Points and MSE -----------#
+
+ggplot(data = full_splits) +
+  geom_point(aes(x = split_val, y = mse, color = var)) + 
+  geom_line(aes(x = split_val, y = mse, color = var)) +
+  scale_x_continuous(expand = c(0, 0), limits = c(0, 1), n.breaks = 11) + 
+  theme_bw() +
+  scale_color_colorblind()
+
+#----------- Further Analysis Based on a Split Value -----------#
+# Analyze data by splitting at .15 and calculate squared errors
+tree_data %>% 
+  mutate(above = weighted_mean >= .15) %>% 
+  group_by(above) %>% 
+  mutate(group_mean = mean(weighted_mean)) %>% 
+  ungroup() %>% 
+  mutate(error_sq = (weighted_mean - group_mean)^2) %>% 
+
+  arrange(desc(error_sq)) %>% 
+  head(30) %>% 
+  kable()
+
+```
+## 6.2 3x3 Tree Elasticity Matrix
+
+```{r}
+#----------- Model Fitting with Regression Tree -----------#
+
+# Fit a regression tree model using rpart
+fit <- rpart(as.formula(weighted_mean ~ .),
+             data = reg_tree_data,
+             method = "anova",
+             cp = 0.007)
+
+# Add leaf information and log-transformed price to the data
+oj_w_leaves <- OJ_tree %>%
+  mutate(leaf = fit$where,           
+         log_price = log(price))     
+
+#----------- Own-Price Elasticity Calculation -----------#
+
+
+own_price_reg <- function(leaf_num) {
+  df <- oj_w_leaves %>%
+    filter(leaf == leaf_num)
+  
+
+  reg <- lm(logmove ~ log_price * brand * feat, data = df)
+  
+
+  return(
+    tidy(reg) %>%
+      filter(term == 'log_price') %>%
+      pull(estimate)
+  )
+}
+
+# Calculate own-price elasticities for each unique leaf
+sapply(sort(unique(oj_w_leaves$leaf)), own_price_reg)
+
+#----------- Preparing Data for Cross-Price Elasticity Analysis -----------#
+
+
+wide_data <- OJ_tree %>%
+  mutate(log_price = log(price)) %>%           
+  select(store, week, brand, log_price, feat) %>%
+  pivot_longer(log_price) %>%                   
+  mutate(name = str_c(name, brand, sep = '_')) %>% 
+  select(-brand) %>%
+  pivot_wider(id_cols = c(store, week),         
+              names_from = name,
+              values_from = value)
+
+
+cross_price_data <- OJ_tree %>%
+  select(store, week, logmove, brand, feat) %>%
+  left_join(wide_data, by = c('store', 'week')) %>%
+  left_join(oj_w_leaves %>%
+              distinct(store, week, leaf),
+            by = c('store', 'week'))
+
+#----------- Regression and Formatting Function -----------#
+
+
+format_reg <- function(brand_var, df) {
+  reg <- lm(logmove ~ log_price_tropicana * feat + log_price_dominicks * feat + log_price_minute.maid * feat,
+            data = df %>% filter(brand == brand_var))
+  
+
+  output <- reg %>%
+    tidy() %>%
+    filter(term %in% str_c('log_price_', unique(OJ$brand))) %>% 
+    select(term, estimate) %>%
+    mutate(q_var = brand_var) %>%
+    pivot_wider(id_cols = q_var, 
+                names_from = term, 
+                values_from = estimate) %>%
+    select(q_var, log_price_dominicks, log_price_minute.maid, log_price_tropicana)
+  
+  return(output)
+}
+
+
+elast_mat <- function(leaf_num) {
+  df <- cross_price_data %>%
+    filter(leaf == leaf_num)
+  
+  output <- bind_rows(
+    lapply(unique(OJ$brand), format_reg, df)
+  ) %>%
+  arrange(q_var) %>%
+  kable()
+  
+  return(output)
+}
+
+
+elast_mat(2)
+elast_mat(4)
+elast_mat(5)
+
+```
+
+
+

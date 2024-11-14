@@ -1,0 +1,160 @@
+---
+title: "ISL2 Ch2.3 HW1 Submission"
+output:
+  html_document: default
+  pdf_document: default
+date: "2024-10-01"
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE) # sets default behavior to include code in the HTML file, please keep
+
+rm(list = ls()) # clears the environment of any existing objects
+
+suppressPackageStartupMessages({ # reduces annoying printing
+  library(janitor) # has helpful cleaning functions
+  library(knitr) # knitting functions (transforming RMarkdown file to HTML)
+  library(lubridate) # date parsing functions
+  library(scales) # library for formatting ggplot axes
+  library(tidyverse) # workhorse dplyr package
+})
+
+options(dplyr.summarise.inform = FALSE) # turns off an annoying dplyr behavior
+
+set.seed(487) # setting the seed makes random operations reproducible
+```
+
+## 2.3.1 Basic Commands
+
+```{r}
+x <- c(1,3,2,5) # creates a vector of 1,3,2,5
+x               # calls and display vector x
+
+x <-c(1,6,2)
+y = c(1,4,3)
+
+length(x)       # display length of x
+length(y)
+
+x+y             # calls and display of the vector addition of x and y
+
+ls()           # display the list of all objects
+
+rm(x,y)       # remove x and y objects
+
+rm(list = ls()) # remove all objects in the list
+
+
+x <- matrix(c(1,2,3,4),2,2) # creates a matrix x with 2 col and 2 row of [1,2],[3,4] (filled by column by default)
+
+x <- matrix(c(1,2,3,4),2,2, byrow = TRUE) # creates a matrix x with 2 col and 2 row of [1,3],[2,4] filled by row
+
+sqrt(x) # takes the square root of each element of the vector/matrix
+
+x^2 # squares each element of the vector/matrix
+
+x <- rnorm(50) # generates a vector of random normal variables with n = 50
+y<- x+ rnorm(50, mean = 50, sd = .1) # add x vector to the another random normal vector with standard deviation = 0.1 and mean = 50 as arguments
+cor(x,y) # calculate the correlation between x and y
+
+set.seed(3) # generate a reproducible random set of numbers with code 3 (number itself is arbitrary) for the follow up operations
+y <- rnorm(100) 
+
+mean(y) # display mean of y
+var(y) # display variance of y
+sqrt(var(y)) #display square root of variance of y
+sd(y) #display standard deviation of y
+```
+ 
+## 2.3.2 Graphics
+```{r}
+x <- rnorm(100)
+y <- rnorm(100)
+
+plot(x,y, xlab = 'this is x axis', 
+     ylab = 'this is y axis',
+     main = 'Plot of X vs. Y') # creates a plot based on normal random x and y vectors with x, y labels included and a main title
+
+pdf('Figure.pdf') # creates pdf (for jpeg, use jpeg('figure name'))
+plot(x,y,col = 'green')
+dev.off() # indicates a finish operation, which in our case is the plotting
+
+x <- seq(1,10) # creates a sequence of integer number from 1 to 10 (better alternative: seq(1,10, length = 10))
+x <- 1: 10
+x<- seq(-pi, pi, length = 50)
+
+y<-x
+f <- outer(x,y, function(x,y) cos(y)/(1+x^2)) # outer products of the x and y arrays operated with cos(Y[arrayindex.y])/(1+X[arrayindex.x]^2)
+contour(x,y,f)
+contour(x,y,f, nlevels = 45, add = T) # creates a contour plot of f on x,y axis with 45 levels of contour lines added to current (previous R-line plot) plot
+fa <- (f - t(f)) /2 # set a function products of f subtract to its transposed version and divide the function products by two
+contour(x,y,fa, nlevel = 15)
+
+image(x,y,fa) # creates a color-coded plot (heatmap) dependent on z value to its color
+persp(x,y,fa, theta = 30, phi = 20) # creates a 3-d plot with theta and phi to augment to angle of the view
+
+```
+
+## 2.3.3 Indexing Data
+
+```{r} 
+A <- matrix(1:16,4,4)
+A
+
+A[2,3] #access the element on the second row, third column
+
+A[c(1,3), c(2,4)] # access and create a matrix based on the row 2 (limited by 1,3) and column 3 (limieted by 2,4) elements 
+
+A[1:3, 2:4] #access and create matrix with row 1-3 and 2-4 in column elements
+
+A[1:2, ] #access and create matrix with row 1-2 and all the column elements
+
+A[, 1:2] #access and create matrix with column 1-2 and all the row elements
+
+A[-c(1,3), ] # access and create matrix with row 1, 3 excluded and of all column
+
+dim(A) # returns the dimension information of the matrix
+```
+
+## 2.3.4 Loading Data
+```{r}
+Auto <- read.table("Auto.data") # read Auto text file as table
+head(Auto) # Provide the first five entry of the data, View(Auto) # View Auto data in tabular format
+
+Auto <- read.table("Auto.data", header = T, na.strings = "?", stringsAsFactors = T) # read Auto text file as table with the first line as header, na assign when ? encounter, and assign the string as qualitative varaible
+head(Auto)
+
+Auto <- read.csv("Auto.csv", na.strings = "?", stringsAsFactors = T) # read Auto csv files as table with na assign when ? encounter, and assign the string as qualitative variable
+head(Auto)
+dim(Auto)
+Auto[1:4, ]
+
+Auto <-na.omit(Auto) # omits the na data/ missing data
+dim(Auto)
+
+names(Auto) # checks variable names
+```
+
+## 2.3.5 Additional Graphical and Numerical Summaries
+```{r}
+plot(Auto$cylinders , Auto$mpg) # plot cylinders on mpg from Auto
+
+attach(Auto) # call the Auto data
+plot(cylinders , mpg) # plot cylinders on mpg 
+
+cylinders <- as.factor(cylinders) # store cylinder numerical value as qualitative value
+
+plot(cylinders, mpg, col = "red", varwidth = T, xlab = "cylinders", ylab = "MPG") # box plot produced with cylinder being qualitative
+
+hist(mpg, col = 2, breaks = 15) # plot histogram based on mpg with col = 2 (equiv. to red)
+
+pairs(Auto) # plot scatter plots based on all numerical columns in Auto
+pairs(~mpg + displacement + horsepower + weight + acceleration, data = Auto
+) # plot scatter plots based on specified numerical columns in Auto
+
+plot(horsepower , mpg)
+identify(horsepower, mpg, name) # when plot of horsepower on mpg, name label will be displayed
+
+summary(Auto) # illustrate out the descriptive statistics of Auto
+summary(mpg)
+```

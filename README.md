@@ -13,7 +13,7 @@ This repository contains homework assignments HW1 through HW5 for ECON 487, Fall
 
 - **HW2**: Price Elasticity Analysis
   - Topics: Box plots, log transformations, regression of log(quantity) on log(price), feature effects.
-  - [Problem Set2](HW2/Problem Set 2 2024.pdf)
+  - [Problem Set2](Henry8r8w/ECON487_UW_ProblemSets/HW2/Problem Set 2 2024.pdf)
 
 - **HW3**: Cross-Validation and Elasticity
   - Topics: Interaction terms, lagged variables, seasonality adjustments, cross-validation.

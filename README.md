@@ -1,5 +1,3 @@
-# README
-
 ## ECON 487: Data Science for Strategic Pricing
 
 ### Description
